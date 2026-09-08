@@ -117,19 +117,19 @@
 (rule (truthy (popcnt _ x)) x)
 (rule (truthy (rotl _ x _)) x)
 (rule (truthy (rotr _ x _)) x)
-(rule (truthy (select _ x (iconst_u _ (u64_when_non_zero)) (iconst_u _ 0))) x)
+(rule (truthy (select _ x (iconst_u _ (u64_when_non_zero)) (all_zero _))) x)
 ;; (ne ty (iconst 0) v) is also canonicalized into this form via another rule
-(rule (truthy (ne _ x (iconst_u _ 0))) x)
+(rule (truthy (ne _ x (all_zero _))) x)
 
 ;; All of these expressions don't care about their input as long as it is truthy.
 ;; so we can remove expressions that preserve that property from the input.
 (rule (simplify (bmask ty v)) (if-let x (truthy v)) (bmask ty x))
 (rule (simplify (select ty v t f)) (if-let c (truthy v)) (select ty c t f))
 ;; (ne ty (iconst 0) v) is also canonicalized into this form via another rule
-(rule (simplify (ne cty v (iconst_u _ 0)))
+(rule (simplify (ne cty v (all_zero _)))
       (if-let c (truthy v))
       (if-let (value_type (ty_int_ref_scalar_64_extract ty)) c)
-      (ne cty c (iconst_u ty 0)))
+      (ne cty c (all_zero ty)))
 
 
 
@@ -790,3 +790,44 @@
 
 ;; popcnt(bitrev(x)) == popcnt(x)
 (rule (simplify (popcnt ty (bitrev ty x))) (popcnt ty x))
+
+;; (x ^ y) ^ (x ^ z) --> y ^ z.
+(rule (simplify (bxor ty (bxor ty x y) (bxor ty x z))) (subsume (bxor ty y z)))
+(rule (simplify (bxor ty (bxor ty x y) (bxor ty z x))) (subsume (bxor ty y z)))
+(rule (simplify (bxor ty (bxor ty y x) (bxor ty x z))) (subsume (bxor ty y z)))
+(rule (simplify (bxor ty (bxor ty y x) (bxor ty z x))) (subsume (bxor ty y z)))
+
+;; (-x) & 1 --> x & 1.
+(rule (simplify (band ty (ineg ty x) (iconst_u ty 1))) (band ty x (iconst_u ty 1)))
+
+;; (x & y) & (x | z) --> x & y.
+(rule (simplify (band ty (band ty x y) (bor ty x z))) (subsume (band ty x y)))
+(rule (simplify (band ty (bor ty x z) (band ty x y))) (subsume (band ty x y)))
+(rule (simplify (band ty (band ty x y) (bor ty z x))) (subsume (band ty x y)))
+(rule (simplify (band ty (bor ty z x) (band ty x y))) (subsume (band ty x y)))
+(rule (simplify (band ty (band ty y x) (bor ty x z))) (subsume (band ty x y)))
+(rule (simplify (band ty (bor ty x z) (band ty y x))) (subsume (band ty x y)))
+(rule (simplify (band ty (band ty y x) (bor ty z x))) (subsume (band ty x y)))
+(rule (simplify (band ty (bor ty z x) (band ty y x))) (subsume (band ty x y)))
+
+;; (x & y) | (x | z) --> x | z.
+(rule (simplify (bor ty (band ty x y) (bor ty x z))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (bor ty x z) (band ty x y))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (band ty x y) (bor ty z x))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (bor ty z x) (band ty x y))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (band ty y x) (bor ty x z))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (bor ty x z) (band ty y x))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (band ty y x) (bor ty z x))) (subsume (bor ty x z)))
+(rule (simplify (bor ty (bor ty z x) (band ty y x))) (subsume (bor ty x z)))
+
+;; (x & y) | (x ^ y) --> x | y.
+(rule (simplify (bor ty (band ty x y) (bxor ty x y))) (bor ty x y))
+(rule (simplify (bor ty (bxor ty x y) (band ty x y))) (bor ty x y))
+(rule (simplify (bor ty (band ty x y) (bxor ty y x))) (bor ty x y))
+(rule (simplify (bor ty (bxor ty y x) (band ty x y))) (bor ty x y))
+
+;; ~((~x) - y) --> x + y.
+(rule (simplify (bnot ty (isub ty (bnot ty x) y))) (iadd ty x y))
+
+;; ~((~x) >>s y) --> x >>s y.
+(rule (simplify (bnot ty (sshr ty (bnot ty x) y))) (sshr ty x y))
